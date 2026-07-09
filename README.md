@@ -1,42 +1,43 @@
 # SupportOps Agent
 
-SupportOps Agent 是一个 full-stack AI customer support operations system：它把 ticket intake、safety guard、triage、risk policy、tool calling、RAG citations、human approval gate、trace logging 和 eval metrics 放进同一个可运行产品里。
+SupportOps Agent is a full-stack AI customer support operations platform that demonstrates how an agentic support workflow can be routed, audited, evaluated, and controlled with production-oriented safety boundaries.
 
-## 为什么不是简单 Chatbot
+The project is designed around a practical customer support scenario: a user submits a support ticket, the backend runs it through a deterministic multi-step agent workflow, retrieves policy context with citations, plans actions through mock tools, blocks risky operations behind human approval, and persists the full execution trace for observability and evaluation.
 
-普通 chatbot 通常只生成一段回复。SupportOps Agent 明确保存 ticket、执行多节点 agent workflow、调用 mock customer/order/action tools、用知识库检索给出 citations、把退款/取消订单/地址变更等高风险动作送入 pending approval，并把每个节点的 input summary、output summary、tool、latency 和 citations 持久化为 agent trace。
+## Overview
 
-## 架构
+SupportOps Agent is not a single-turn chatbot. It separates conversational response generation from operational decision-making:
+
+- Ticket data is persisted in SQLite.
+- Workflow steps are represented as explicit nodes.
+- Guardrails and risk policies are enforced in Python.
+- Tool calls are recorded and scoped.
+- RAG responses include citations.
+- Sensitive actions require approval before execution.
+- Agent traces are stored as structured events.
+- Evaluation cases measure routing, escalation, approval, citation, and safety behavior.
+
+This makes the system easier to inspect, test, and extend than a prompt-only support assistant.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-  UI["React SaaS Dashboard"] --> API["FastAPI API"]
+  UI["React Dashboard"] --> API["FastAPI API"]
   API --> DB[("SQLite")]
-  API --> GRAPH["Explicit Agent Graph"]
+  API --> GRAPH["Agent Workflow Runner"]
   GRAPH --> GUARD["Prompt Injection Guard"]
   GRAPH --> TRIAGE["Triage Agent"]
-  GRAPH --> POLICY["Risk Policy"]
+  GRAPH --> RISK["Risk Policy"]
   GRAPH --> TOOLS["Customer / Order / Action Tools"]
-  GRAPH --> RAG["Keyword RAG Retriever"]
-  RAG --> KB["Markdown Knowledge Docs"]
-  GRAPH --> APPROVAL["Human Approval Gate"]
+  GRAPH --> RAG["RAG Retriever"]
+  RAG --> KB["Markdown Knowledge Base"]
+  GRAPH --> APPROVAL["Approval Gate"]
   GRAPH --> TRACE["AgentEvent Trace"]
-  API --> EVALS["Eval Runner + Metrics"]
+  API --> EVALS["Evaluation Runner"]
 ```
 
-## 功能
-
-- Persistent SQLite storage: Ticket、Customer、Order、KnowledgeDocument、AgentRun、AgentEvent、PendingAction
-- Multi-step agent workflow: 12 个显式 node，不是单 prompt 伪装
-- Tool calling: customer lookup、order lookup、pending action、approval execution
-- RAG with citations: markdown policy docs 自动 seed / reindex
-- Human-in-the-loop: refund、cancel order、shipping address change、downgrade 等动作必须审批
-- Guardrails: prompt injection、fraud、legal、hacked account、chargeback 自动高风险处理
-- Observability dashboard: stats、charts、recent runs、latest trace preview
-- Eval harness: 20 个 case，输出 routing、escalation、approval、unsafe block、citation metrics
-- Mock LLM default: 不需要 API key；`openai_compatible` 可接入兼容 Chat Completions 的服务
-
-## Agent Workflow
+## Core Workflow
 
 ```mermaid
 flowchart TD
@@ -45,7 +46,7 @@ flowchart TD
   C --> D[risk_policy_node]
   D -->|high risk| E[human_escalation_node]
   E --> L[finalize_node]
-  D -->|normal| F[customer_lookup_node]
+  D -->|standard route| F[customer_lookup_node]
   F --> G[order_lookup_node]
   G --> H[rag_retrieval_node]
   H --> I[response_drafter_node]
@@ -54,15 +55,109 @@ flowchart TD
   K --> L
 ```
 
-## API Examples
+### Workflow Nodes
 
-Health:
+| Node | Responsibility |
+| --- | --- |
+| `intake_node` | Creates and persists the ticket. |
+| `injection_guard_node` | Detects prompt-injection patterns and sanitizes unsafe instructions. |
+| `triage_agent_node` | Classifies category, priority, risk, and route using the configured LLM provider. |
+| `risk_policy_node` | Applies deterministic Python safety rules. |
+| `customer_lookup_node` | Calls the mock customer lookup tool. |
+| `order_lookup_node` | Calls mock order lookup/search tools. |
+| `rag_retrieval_node` | Retrieves policy context and citations from the knowledge base. |
+| `response_drafter_node` | Drafts a customer-facing response. |
+| `action_planner_node` | Plans operational actions without executing sensitive changes. |
+| `approval_gate_node` | Creates pending approvals for risky actions. |
+| `human_escalation_node` | Routes high-risk tickets to a human specialist path. |
+| `finalize_node` | Persists final ticket status and response. |
 
-```bash
-curl http://localhost:8000/api/health
+## Safety Model
+
+Sensitive operations are never executed directly by the agent workflow. The backend creates a `PendingAction` for operations such as:
+
+- refund request
+- order cancellation
+- shipping address change
+- plan downgrade
+- account deletion
+
+Fraud, legal, chargeback, hacked-account, emergency, and prompt-injection cases are escalated to the human route. The final enforcement is deterministic Python logic, not model discretion.
+
+## Features
+
+### Backend
+
+- FastAPI API with modular routers
+- SQLite persistence through SQLAlchemy
+- Ticket, customer, order, knowledge document, run, event, and pending action models
+- Explicit agent workflow with durable trace events
+- Mock LLM provider by default
+- OpenAI-compatible provider option
+- RAG retrieval with citations
+- Approval endpoints for executing or rejecting pending actions
+- Stats endpoint for operational dashboard metrics
+- Evaluation runner with 20 test cases
+- pytest coverage for core routing, safety, approval, RAG, stats, and eval behavior
+
+### Frontend
+
+- React 18 + TypeScript + Vite
+- Tailwind CSS SaaS-style dashboard
+- Ticket submission and detail view
+- Agent trace timeline
+- Approval queue
+- Knowledge base Q&A panel
+- Evaluation metrics page
+- Recharts-based dashboard charts
+
+## Repository Structure
+
+```txt
+.
+├── AGENTS.md
+├── README.md
+├── docker-compose.yml
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   ├── agents/
+│   │   ├── evals/
+│   │   ├── rag/
+│   │   ├── tools/
+│   │   ├── main.py
+│   │   ├── models.py
+│   │   └── db.py
+│   ├── tests/
+│   ├── requirements.txt
+│   └── .env.example
+└── frontend/
+    ├── src/
+    │   ├── api/
+    │   ├── components/
+    │   └── pages/
+    ├── package.json
+    └── vite.config.ts
 ```
 
-Create ticket:
+## API Surface
+
+### Health
+
+```http
+GET /api/health
+```
+
+### Tickets
+
+```http
+POST /api/tickets
+GET /api/tickets
+GET /api/tickets/{ticket_id}
+GET /api/tickets/{ticket_id}/events
+```
+
+Example:
 
 ```bash
 curl -X POST http://localhost:8000/api/tickets \
@@ -70,7 +165,23 @@ curl -X POST http://localhost:8000/api/tickets \
   -d "{\"subject\":\"Cannot reset password\",\"description\":\"The reset link is not arriving in my email.\",\"customer_email\":\"alice@example.com\"}"
 ```
 
-Ask RAG:
+### Approvals
+
+```http
+GET /api/approvals
+POST /api/approvals/{action_id}/approve
+POST /api/approvals/{action_id}/reject
+```
+
+### RAG
+
+```http
+POST /api/rag/ask
+POST /api/rag/reindex
+GET /api/rag/documents
+```
+
+Example:
 
 ```bash
 curl -X POST http://localhost:8000/api/rag/ask \
@@ -78,124 +189,127 @@ curl -X POST http://localhost:8000/api/rag/ask \
   -d "{\"question\":\"How can I cancel my subscription?\"}"
 ```
 
-Run evals:
+### Stats and Evaluations
 
-```bash
-curl -X POST http://localhost:8000/api/evals/run
+```http
+GET /api/stats/overview
+POST /api/evals/run
+GET /api/evals/latest
 ```
 
-## Frontend Screenshots
+## Evaluation Metrics
 
-- `Dashboard`: stat cards, category chart, priority chart, recent runs, trace preview
-- `Tickets`: new ticket form, ticket list, final response, citations, pending actions, full trace
-- `Approvals`: approval cards with payload preview and approve/reject actions
-- `Knowledge Base`: document list, RAG question input, answer with citations
-- `Evals`: run button, metrics cards, failed case table
+The evaluation runner processes a static dataset of support tickets and reports:
 
-## Tech Stack
+| Metric | Meaning |
+| --- | --- |
+| `routing_accuracy` | Category and priority classification correctness. |
+| `escalation_accuracy` | Whether high-risk cases are escalated correctly. |
+| `unsafe_action_block_rate` | Whether forbidden actions are prevented from automatic execution. |
+| `approval_gate_accuracy` | Whether sensitive actions enter the approval queue. |
+| `citation_presence_rate` | Whether knowledge-route responses include citations. |
+| `average_latency_ms` | Average workflow execution latency. |
 
-Backend:
+## LLM Provider Configuration
 
-- Python 3.11+
-- FastAPI
-- Pydantic
-- SQLAlchemy
-- SQLite
-- Explicit graph runner with LangGraph-style node/state boundaries
-- Keyword/TF-IDF-style RAG fallback interface
-- pytest
+The default provider is `mock`, so the project runs without external credentials.
 
-Frontend:
+```env
+LLM_PROVIDER=mock
+OPENAI_API_KEY=
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+DATABASE_URL=sqlite:///./supportops.db
+```
 
-- React 18
-- TypeScript
-- Vite
-- Tailwind CSS
-- Recharts
-- lucide-react
-- Fetch API
+To use an OpenAI-compatible endpoint, set:
 
-LLM provider:
+```env
+LLM_PROVIDER=openai_compatible
+OPENAI_API_KEY=your_api_key
+OPENAI_BASE_URL=https://your-provider.example/v1
+OPENAI_MODEL=your-model
+```
 
-- `LLM_PROVIDER=mock` by default
-- `LLM_PROVIDER=openai_compatible`
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `OPENAI_MODEL`
+## Local Development
 
-## 本地运行
-
-Backend:
+### Backend
 
 ```bash
-cd supportops-agent/backend
+cd backend
 python -m venv .venv
-# Windows:
+
+# Windows
 .venv\Scripts\activate
-# macOS/Linux:
+
+# macOS/Linux
 source .venv/bin/activate
+
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-Frontend:
+### Frontend
 
 ```bash
-cd supportops-agent/frontend
+cd frontend
 npm install
 npm run dev
 ```
 
-Build:
+### Build
 
 ```bash
-cd supportops-agent/frontend
+cd frontend
 npm run build
 ```
 
-Tests:
+### Tests
 
 ```bash
-cd supportops-agent/backend
+cd backend
 pytest -q
 ```
 
-Docker Compose:
+### Docker Compose
 
 ```bash
-cd supportops-agent
 docker compose up
 ```
 
-## Eval Metrics
+## Verification Status
 
-- `routing_accuracy`: category 和 priority 是否符合期望
-- `escalation_accuracy`: fraud/legal/hacked/urgent 是否进入 human escalation
-- `unsafe_action_block_rate`: forbidden actions 是否没有被自动执行
-- `approval_gate_accuracy`: refund、cancel order、address change 等是否进入 approval gate
-- `citation_presence_rate`: knowledge route 是否带 citations
-- `average_latency_ms`: workflow 平均执行延迟
+Current verification commands:
 
-## Startup Interview Value
+```bash
+cd backend
+pytest -q
 
-这个项目适合展示 production-style agent architecture：有持久化、有审批边界、有 trace、有 eval harness、有 guardrails、有 API 和 dashboard。面试时可以从「为什么不能让 LLM 直接执行退款」切入，展示安全策略如何由 Python 强制执行，再展示 trace 和 evals 如何让 agent 行为可审计、可回归测试。
+cd ../frontend
+npm run build
+```
 
-## Stronger than basic support-agent demos
+Expected results:
 
-很多 basic support-agent demos 只做聊天回复或简单 RAG。SupportOps Agent 增强了：
+- Backend test suite passes.
+- Frontend TypeScript and Vite production build passes.
+- `GET /api/health` returns backend, database, LLM provider, and retriever status.
+- Normal knowledge tickets return citations.
+- Fraud/legal/security tickets are escalated.
+- Refund, cancellation, and address-change tickets create pending approvals.
 
-- 显式 agent graph，而不是单轮 prompt
-- risk-aware routing，而不是只靠模型自觉
-- persistent AgentEvent trace，而不是 console log
-- human approval gate，而不是自动执行敏感工具
-- eval dataset + metrics，而不是手动点几次演示
-- mock provider default，而不是强依赖真实 API key
+## Engineering Tradeoffs
+
+- The workflow uses an explicit graph runner with stable node names and state transitions. This keeps the implementation lightweight while preserving LangGraph-style orchestration boundaries.
+- The retriever uses a local keyword/vector-style scoring interface instead of heavyweight embedding dependencies. It can be replaced by ChromaDB or another vector store behind the same RAG API.
+- The mock LLM provider is deterministic to make local development, tests, and evaluation reproducible.
+- Approval execution is simulated, but the persistence and status transitions mirror the shape of a real support-operations system.
 
 ## Roadmap
 
-- Replace keyword retriever with ChromaDB + sentence-transformers behind the same retriever interface
-- Add LangGraph runtime adapter while preserving node contracts
-- Add role-based approval permissions
-- Add webhook/export for trace events
-- Add streaming trace updates over WebSocket
-- Add richer eval reporting and CI badge
+- Add a LangGraph runtime adapter while preserving the current node contracts.
+- Replace the local retriever with ChromaDB and sentence-transformers.
+- Add role-based access control for approval decisions.
+- Add WebSocket streaming for live trace updates.
+- Add CI for backend tests and frontend build.
+- Add richer eval reports with per-case traces and trend history.
