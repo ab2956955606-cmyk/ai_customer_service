@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #172026;
+  background: #f6f8f7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.panel {
+  @apply border border-slate-200 bg-white shadow-sm;
+  border-radius: 8px;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-2 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-ocean hover:text-ocean disabled:cursor-not-allowed disabled:opacity-50;
+  border-radius: 8px;
+}
+
+.btn-primary {
+  @apply border-ocean bg-ocean text-white hover:border-teal-800 hover:bg-teal-800 hover:text-white;
+}
+
+.btn-danger {
+  @apply border-rosewood bg-rosewood text-white hover:border-rose-800 hover:bg-rose-800 hover:text-white;
+}
+
+.input {
+  @apply w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-ocean focus:ring-2 focus:ring-teal-100;
+  border-radius: 8px;
+}
+
+.badge {
+  @apply inline-flex items-center gap-1 border px-2 py-1 text-xs font-medium;
+  border-radius: 999px;
+}
