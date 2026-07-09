@@ -58,22 +58,27 @@ def _set_event(
 
 
 def intake_node(state: AgentState, db: Session) -> AgentState:
-    ticket = Ticket(
-        subject=state["subject"],
-        description=state["description"],
-        customer_email=state.get("customer_email"),
-        category="unknown",
-        priority="normal",
-        risk_level="low",
-        status="processing",
-        assigned_agent="supportops-agent",
-    )
-    db.add(ticket)
+    ticket = db.get(Ticket, int(state["ticket_id"])) if state.get("ticket_id") else None
+    if ticket is None:
+        ticket = Ticket(
+            subject=state["subject"],
+            description=state["description"],
+            customer_email=state.get("customer_email"),
+            category="unknown",
+            priority="normal",
+            risk_level="low",
+            status="processing",
+            assigned_agent="supportops-agent",
+        )
+        db.add(ticket)
+    else:
+        ticket.status = "processing"
+        ticket.assigned_agent = ticket.assigned_agent or "supportops-agent"
     db.commit()
     db.refresh(ticket)
     state["ticket_id"] = ticket.id
     state.setdefault("tool_results", {})["ticket"] = ticket_to_dict(ticket)
-    _set_event(state, f"Ticket {ticket.id} created and moved to processing.")
+    _set_event(state, f"Ticket {ticket.id} accepted and moved to processing.")
     return state
 
 

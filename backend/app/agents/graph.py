@@ -113,8 +113,11 @@ def run_ticket_workflow(
     subject: str,
     description: str,
     customer_email: str | None = None,
+    ticket_id: int | None = None,
 ) -> dict:
     state = initial_state(subject=subject, description=description, customer_email=customer_email)
+    if ticket_id is not None:
+        state["ticket_id"] = ticket_id
     started_at = utc_now()
     graph_prefix = ["intake_node", "injection_guard_node", "triage_agent_node", "risk_policy_node"]
 

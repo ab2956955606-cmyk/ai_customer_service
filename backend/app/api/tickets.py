@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.agents.graph import run_ticket_workflow
+from app.agents.runtime_factory import get_support_runner
 from app.db import get_db
 from app.models import AgentEvent, AgentRun, PendingAction, Ticket
 from app.schemas import TicketCreate, TicketWorkflowResponse
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/tickets", tags=["tickets"])
 
 @router.post("", response_model=TicketWorkflowResponse)
 def create_ticket(payload: TicketCreate, db: Session = Depends(get_db)) -> dict:
-    result = run_ticket_workflow(
+    result = get_support_runner().run_ticket_data(
         db,
         subject=payload.subject,
         description=payload.description,

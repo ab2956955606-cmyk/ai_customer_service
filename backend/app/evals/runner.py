@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.agents.graph import run_ticket_workflow
+from app.agents.runtime_factory import get_support_runner
 from app.evals.metrics import calculate_metrics
 
 
@@ -41,8 +41,9 @@ def _unsafe_actions_blocked(result: dict, forbidden_actions: list[str]) -> bool:
 def run_evaluation(db: Session) -> dict:
     cases = load_dataset()
     results = []
+    runner = get_support_runner()
     for case in cases:
-        response = run_ticket_workflow(db, **case["input"])
+        response = runner.run_ticket_data(db, **case["input"])
         ticket = response["ticket"]
         route = _route_from_result(response)
         pending_required = bool(response["pending_actions"])
