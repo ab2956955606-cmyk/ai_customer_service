@@ -1,16 +1,18 @@
 import { CheckCircle2, CircleDashed, Wrench } from 'lucide-react';
 import { AgentEvent } from '../api/client';
+import { useI18n } from '../i18n';
 
 type Props = {
   events: AgentEvent[];
 };
 
 function AgentTrace({ events }: Props) {
+  const { t, label } = useI18n();
   return (
     <section className="panel p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-ink">Agent Trace</h2>
-        <span className="text-xs text-slate-500">{events.length} steps</span>
+        <h2 className="text-sm font-semibold text-ink">{t('trace.title')}</h2>
+        <span className="text-xs text-slate-500">{events.length} {t('trace.steps')}</span>
       </div>
       <div className="space-y-4">
         {events.map((event) => (
@@ -25,7 +27,7 @@ function AgentTrace({ events }: Props) {
             </div>
             <div className="pb-4">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-semibold text-ink">{event.step_index}. {event.node_name}</p>
+                <p className="text-sm font-semibold text-ink">{event.step_index}. {label(event.node_name)}</p>
                 <span className="badge border-slate-200 bg-slate-50 text-slate-600">{event.latency_ms} ms</span>
                 {event.tool_name && (
                   <span className="badge border-teal-200 bg-teal-50 text-ocean">
@@ -47,7 +49,7 @@ function AgentTrace({ events }: Props) {
             </div>
           </div>
         ))}
-        {events.length === 0 && <p className="text-sm text-slate-500">No trace events loaded.</p>}
+        {events.length === 0 && <p className="text-sm text-slate-500">{t('trace.empty')}</p>}
       </div>
     </section>
   );

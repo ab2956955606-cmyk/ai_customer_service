@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, Clock3, Gauge, Inbox } from 'lucide-react';
 import { StatsOverview } from '../api/client';
+import { useI18n } from '../i18n';
 
 type Props = {
   stats: StatsOverview | null;
@@ -15,13 +16,14 @@ const empty = {
 };
 
 function StatCards({ stats }: Props) {
+  const { t } = useI18n();
   const data = stats ?? empty;
   const cards = [
-    { label: 'Total tickets', value: data.total_tickets, icon: Inbox, tone: 'text-slate-700' },
-    { label: 'Resolved', value: data.resolved_tickets, icon: CheckCircle2, tone: 'text-ocean' },
-    { label: 'Escalated', value: data.escalated_tickets, icon: AlertTriangle, tone: 'text-rosewood' },
-    { label: 'Pending approval', value: data.pending_approval_count, icon: Clock3, tone: 'text-ember' },
-    { label: 'Avg latency', value: `${data.average_latency} ms`, icon: Gauge, tone: 'text-slate-700' }
+    { label: t('dashboard.totalTickets'), value: data.total_tickets, icon: Inbox, tone: 'text-slate-700' },
+    { label: t('dashboard.resolved'), value: data.resolved_tickets, icon: CheckCircle2, tone: 'text-ocean' },
+    { label: t('dashboard.escalated'), value: data.escalated_tickets, icon: AlertTriangle, tone: 'text-rosewood' },
+    { label: t('dashboard.pendingApproval'), value: data.pending_approval_count, icon: Clock3, tone: 'text-ember' },
+    { label: t('dashboard.averageLatency'), value: `${data.average_latency} ms`, icon: Gauge, tone: 'text-slate-700' }
   ];
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">

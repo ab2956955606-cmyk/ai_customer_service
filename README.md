@@ -170,7 +170,7 @@ GET /api/tickets/{ticket_id}/events
 Example:
 
 ```bash
-curl -X POST http://localhost:8000/api/tickets \
+curl -X POST http://localhost:8001/api/tickets \
   -H "Content-Type: application/json" \
   -d "{\"subject\":\"Cannot reset password\",\"description\":\"The reset link is not arriving in my email.\",\"customer_email\":\"alice@example.com\"}"
 ```
@@ -194,7 +194,7 @@ GET /api/rag/documents
 Example:
 
 ```bash
-curl -X POST http://localhost:8000/api/rag/ask \
+curl -X POST http://localhost:8001/api/rag/ask \
   -H "Content-Type: application/json" \
   -d "{\"question\":\"How can I cancel my subscription?\"}"
 ```
@@ -254,7 +254,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 ```
 
 ### Frontend
@@ -488,7 +488,7 @@ GET /api/tickets/{ticket_id}/events
 Example:
 
 ```bash
-curl -X POST http://localhost:8000/api/tickets \
+curl -X POST http://localhost:8001/api/tickets \
   -H "Content-Type: application/json" \
   -d "{\"subject\":\"Cannot reset password\",\"description\":\"The reset link is not arriving in my email.\",\"customer_email\":\"alice@example.com\"}"
 ```
@@ -512,7 +512,7 @@ GET /api/rag/documents
 Example:
 
 ```bash
-curl -X POST http://localhost:8000/api/rag/ask \
+curl -X POST http://localhost:8001/api/rag/ask \
   -H "Content-Type: application/json" \
   -d "{\"question\":\"How can I cancel my subscription?\"}"
 ```
@@ -572,7 +572,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 ```
 
 ### Frontend

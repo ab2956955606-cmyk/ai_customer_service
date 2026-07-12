@@ -4,12 +4,15 @@ import { api, Ticket, TicketDetail, TicketWorkflowResponse } from '../api/client
 import TicketForm from '../components/TicketForm';
 import TicketList from '../components/TicketList';
 import TicketDetailPage from './TicketDetailPage';
+import { useI18n } from '../i18n';
 
 type Props = {
   onChanged: () => void;
+  deepSeekApiKey: string | null;
 };
 
-function TicketsPage({ onChanged }: Props) {
+function TicketsPage({ onChanged, deepSeekApiKey }: Props) {
+  const { t } = useI18n();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<TicketDetail | null>(null);
@@ -48,10 +51,10 @@ function TicketsPage({ onChanged }: Props) {
   return (
     <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
       <div className="grid content-start gap-4">
-        <TicketForm onCreated={onCreated} />
-        <button type="button" className="btn" onClick={loadTickets} title="Refresh tickets">
+        <TicketForm onCreated={onCreated} deepSeekApiKey={deepSeekApiKey} />
+        <button type="button" className="btn" onClick={loadTickets} title={t('tickets.refresh')}>
           <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-          Refresh tickets
+          {t('tickets.refresh')}
         </button>
         <TicketList tickets={tickets} selectedId={selectedId} onSelect={setSelectedId} />
       </div>

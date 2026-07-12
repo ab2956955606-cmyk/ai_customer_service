@@ -95,6 +95,11 @@ class ApprovalDecisionResponse(BaseModel):
 
 
 class EvalRunResponse(BaseModel):
+    locale: str
+    run_id: str | None
+    started_at: str | None
+    completed_at: str | None
     metrics: dict[str, float]
     results: list[dict[str, Any]]
     failed_cases: list[dict[str, Any]]
+    llm_execution: dict[str, str | int]

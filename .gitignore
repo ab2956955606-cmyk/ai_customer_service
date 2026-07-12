@@ -10,6 +10,7 @@ backend/.venv/
 backend/supportops.db
 backend/test_supportops.db
 backend/app/evals/latest_results.json
+backend/app/evals/latest_results.*.json
 
 frontend/node_modules/
 frontend/dist/

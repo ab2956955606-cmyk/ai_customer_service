@@ -7,11 +7,41 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from app.agents.policy import (
+    ADDRESS_CHANGE_TERMS,
+    CANCEL_ORDER_TERMS,
+    COMPLAINT_TERMS,
+    DOWNGRADE_TERMS,
+    FRAUD_TERMS,
+    INVOICE_TERMS,
+    PASSWORD_TERMS,
+    REFUND_TERMS,
+    SECURITY_TERMS,
+    SETUP_TERMS,
+    SHIPPING_TERMS,
+    SUBSCRIPTION_TERMS,
+    contains_any,
+    detect_locale,
+)
 from app.models import KnowledgeDocument
 from app.rag.indexer import reindex_documents
 
 
 TOKEN_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]+")
+
+QUERY_EXPANSIONS = (
+    (PASSWORD_TERMS, "password reset login sign in email link account"),
+    (REFUND_TERMS, "refund money back duplicate charge purchase order billing payment"),
+    (
+        SHIPPING_TERMS | ADDRESS_CHANGE_TERMS | CANCEL_ORDER_TERMS,
+        "shipping shipment address delivery tracking late order package cancel",
+    ),
+    (SUBSCRIPTION_TERMS | DOWNGRADE_TERMS, "subscription cancellation downgrade plan renewal account settings"),
+    (INVOICE_TERMS, "invoice receipt tax VAT billing history payment record"),
+    (FRAUD_TERMS | SECURITY_TERMS, "fraud unauthorized charge hacked account takeover legal police emergency"),
+    (SETUP_TERMS, "product setup configure install onboarding workspace team support steps"),
+    (COMPLAINT_TERMS, "service complaint delayed support recovery apology response policy"),
+)
 
 
 @dataclass
@@ -23,6 +53,11 @@ class RetrievedDocument:
 
 def tokenize(text: str) -> list[str]:
     return [token.lower() for token in TOKEN_RE.findall(text)]
+
+
+def expand_query(question: str) -> str:
+    expansions = [keywords for terms, keywords in QUERY_EXPANSIONS if contains_any(question, terms)]
+    return " ".join([question, *expansions])
 
 
 def _best_snippet(content: str, query_terms: set[str], max_len: int = 220) -> str:
@@ -57,7 +92,7 @@ def retrieve(db: Session, question: str, limit: int = 3) -> list[dict]:
     if db.query(KnowledgeDocument).count() == 0:
         reindex_documents(db)
 
-    query_tokens = tokenize(question)
+    query_tokens = tokenize(expand_query(question))
     query_terms = set(query_tokens)
     scored: list[RetrievedDocument] = []
     for doc in db.query(KnowledgeDocument).all():
@@ -77,14 +112,21 @@ def retrieve(db: Session, question: str, limit: int = 3) -> list[dict]:
 
 def answer_question(db: Session, question: str) -> dict:
     citations = retrieve(db, question, limit=3)
+    locale = detect_locale(question)
     if not citations:
         return {
-            "answer": "I could not find a strong policy match. Please add more context or route this to a human specialist.",
+            "answer": (
+                "暂未找到匹配度足够高的政策，请补充更多信息或转交人工客服专员处理。"
+                if locale == "zh"
+                else "I could not find a strong policy match. Please add more context or route this to a human specialist."
+            ),
             "citations": [],
         }
     titles = ", ".join(citation["title"] for citation in citations)
     answer = (
-        "Based on the knowledge base, follow the matching support policy and keep risky "
+        f"根据知识库，请遵循匹配的客服政策，并确保所有高风险变更经过审批。参考来源：{titles}。"
+        if locale == "zh"
+        else "Based on the knowledge base, follow the matching support policy and keep risky "
         f"changes behind approval. Relevant sources: {titles}."
     )
     return {"answer": answer, "citations": citations}

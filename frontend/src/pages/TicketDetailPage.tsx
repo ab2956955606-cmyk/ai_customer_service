@@ -1,5 +1,6 @@
 import { AgentEvent, Citation, PendingAction, Ticket, TicketDetail } from '../api/client';
 import AgentTrace from '../components/AgentTrace';
+import { useI18n } from '../i18n';
 
 type Props = {
   detail: TicketDetail | null;
@@ -18,6 +19,7 @@ const tone: Record<string, string> = {
 };
 
 function TicketDetailPage({ detail, fallback }: Props) {
+  const { t, label } = useI18n();
   const ticket = detail?.ticket ?? fallback?.ticket ?? null;
   const events = detail?.events ?? fallback?.events ?? [];
   const actions = detail?.pending_actions ?? fallback?.pending_actions ?? [];
@@ -26,7 +28,7 @@ function TicketDetailPage({ detail, fallback }: Props) {
   if (!ticket) {
     return (
       <section className="panel p-4">
-        <p className="text-sm text-slate-500">Select a ticket to inspect the workflow.</p>
+        <p className="text-sm text-slate-500">{t('ticket.select')}</p>
       </section>
     );
   }
@@ -37,21 +39,21 @@ function TicketDetailPage({ detail, fallback }: Props) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-base font-semibold text-ink">{ticket.subject}</h2>
-            <p className="mt-1 text-sm text-slate-500">{ticket.customer_email ?? 'unknown customer'}</p>
+            <p className="mt-1 text-sm text-slate-500">{ticket.customer_email ?? t('common.unknownCustomer')}</p>
           </div>
-          <span className={`badge ${tone[ticket.status] ?? 'border-slate-200 bg-slate-50 text-slate-600'}`}>{ticket.status}</span>
+          <span className={`badge ${tone[ticket.status] ?? 'border-slate-200 bg-slate-50 text-slate-600'}`}>{label(ticket.status)}</span>
         </div>
         <p className="mt-4 text-sm leading-6 text-slate-700">{ticket.description}</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <span className="badge border-slate-200 bg-slate-50 text-slate-600">{ticket.category ?? 'unknown'}</span>
-          <span className="badge border-slate-200 bg-slate-50 text-slate-600">{ticket.priority ?? 'normal'}</span>
-          <span className="badge border-slate-200 bg-slate-50 text-slate-600">{ticket.risk_level ?? 'low'} risk</span>
+          <span className="badge border-slate-200 bg-slate-50 text-slate-600">{label(ticket.category)}</span>
+          <span className="badge border-slate-200 bg-slate-50 text-slate-600">{label(ticket.priority ?? 'normal')}</span>
+          <span className="badge border-slate-200 bg-slate-50 text-slate-600">{t('common.risk')}: {label(ticket.risk_level ?? 'low')}</span>
         </div>
       </section>
 
       <section className="panel p-4">
-        <h2 className="text-sm font-semibold text-ink">Final Response</h2>
-        <p className="mt-3 text-sm leading-6 text-slate-700">{ticket.final_response ?? 'No response yet.'}</p>
+        <h2 className="text-sm font-semibold text-ink">{t('ticket.finalResponse')}</h2>
+        <p className="mt-3 text-sm leading-6 text-slate-700">{ticket.final_response ?? t('ticket.noResponse')}</p>
         {citations.length > 0 && (
           <div className="mt-4 flex flex-wrap gap-2">
             {citations.map((citation, index) => (
@@ -65,13 +67,13 @@ function TicketDetailPage({ detail, fallback }: Props) {
 
       {actions.length > 0 && (
         <section className="panel p-4">
-          <h2 className="text-sm font-semibold text-ink">Pending Actions</h2>
+          <h2 className="text-sm font-semibold text-ink">{t('ticket.pendingActions')}</h2>
           <div className="mt-3 grid gap-3">
             {actions.map((action) => (
               <div key={action.id} className="border border-slate-200 p-3" style={{ borderRadius: 8 }}>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-ink">{action.action_type}</span>
-                  <span className="badge border-amber-200 bg-amber-50 text-ember">{action.status}</span>
+                  <span className="font-medium text-ink">{label(action.action_type)}</span>
+                  <span className="badge border-amber-200 bg-amber-50 text-ember">{label(action.status)}</span>
                 </div>
                 <pre className="mt-2 overflow-auto text-xs text-slate-600">{JSON.stringify(action.payload_json, null, 2)}</pre>
               </div>

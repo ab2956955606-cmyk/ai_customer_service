@@ -2,69 +2,87 @@ from __future__ import annotations
 
 import json
 import re
+import socket
+import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
+from app.agents.policy import detect_locale, deterministic_classification
 from app.config import get_settings
 
-
-URGENT_TERMS = {
+CANONICAL_CATEGORIES = {
+    "account",
+    "billing",
     "fraud",
-    "unauthorized charge",
-    "chargeback",
-    "hacked",
-    "account takeover",
-    "legal",
-    "lawsuit",
-    "police",
-    "emergency",
+    "security",
+    "shipping",
+    "technical",
+    "general",
+    "unknown",
 }
+CANONICAL_PRIORITIES = {"normal", "medium", "urgent"}
+CANONICAL_RISK_LEVELS = {"low", "medium", "high"}
 
 
 class BaseLLMClient:
+    provider_name = "mock"
+    model_name = "deterministic"
+
+    def __init__(self) -> None:
+        self.attempted_calls = 0
+        self.successful_calls = 0
+        self.failed_calls = 0
+        self.fallback_calls = 0
+        self.retry_attempts = 0
+        self.last_classification_suggestion: dict[str, Any] | None = None
+
     def classify_ticket(self, subject: str, description: str) -> dict[str, Any]:
         raise NotImplementedError
 
     def draft_response(self, state: dict[str, Any]) -> str:
         raise NotImplementedError
+
+    def record_fallback(self) -> None:
+        self.fallback_calls += 1
+
+    def call_audit(self) -> dict[str, str | int]:
+        return {
+            "provider": self.provider_name,
+            "model": self.model_name,
+            "attempted_calls": self.attempted_calls,
+            "successful_calls": self.successful_calls,
+            "failed_calls": self.failed_calls,
+            "fallback_calls": self.fallback_calls,
+            "retry_attempts": self.retry_attempts,
+        }
 
 
 class MockLLMClient(BaseLLMClient):
     def classify_ticket(self, subject: str, description: str) -> dict[str, Any]:
-        text = f"{subject} {description}".lower()
-        if any(term in text for term in URGENT_TERMS):
-            category = "fraud" if any(term in text for term in {"fraud", "unauthorized charge", "chargeback"}) else "security"
-            return {
-                "category": category,
-                "priority": "urgent",
-                "risk_level": "high",
-                "requires_human": True,
-                "requires_approval": False,
-                "confidence": 0.96,
-            }
-        if "refund" in text or "money back" in text or "duplicate charge" in text:
-            return self._result("billing", "medium", "medium", approval=True, confidence=0.9)
-        if "address" in text or "shipping" in text or "shipment" in text or "delivery" in text:
-            approval = "change" in text or "update" in text or "new address" in text
-            return self._result("shipping", "medium" if approval else "normal", "medium" if approval else "low", approval=approval, confidence=0.88)
-        if "cancel order" in text:
-            return self._result("shipping", "medium", "medium", approval=True, confidence=0.9)
-        if "cancel subscription" in text or "subscription" in text or "downgrade" in text:
-            approval = "downgrade" in text or "delete" in text
-            return self._result("account", "normal", "medium" if approval else "low", approval=approval, confidence=0.86)
-        if "password" in text or "reset" in text or "login" in text or "sign in" in text:
-            return self._result("account", "normal", "low", confidence=0.92)
-        if "invoice" in text or "receipt" in text or "tax" in text:
-            return self._result("billing", "normal", "low", confidence=0.9)
-        if "setup" in text or "install" in text or "configure" in text:
-            return self._result("technical", "normal", "low", confidence=0.84)
-        if "angry" in text or "terrible" in text or "unacceptable" in text:
-            return self._result("general", "medium", "low", confidence=0.7)
-        return self._result("unknown", "normal", "low", confidence=0.35)
+        return deterministic_classification(subject, description)
 
     def draft_response(self, state: dict[str, Any]) -> str:
         citations = state.get("citations") or []
+        locale = state.get("locale") or detect_locale(
+            str(state.get("subject", "")),
+            str(state.get("sanitized_description") or state.get("description", "")),
+        )
+        if locale == "zh":
+            if state.get("requires_human"):
+                return "该工单包含高风险信息，已转交人工客服专员审查，我们会尽快与您联系。"
+            if state.get("low_confidence"):
+                return "请补充说明您遇到的具体问题、期望结果以及相关订单或账户信息，以便我们准确处理。"
+
+            subject = state.get("subject", "您的请求")
+            if citations:
+                sources = "、".join(c["title"] for c in citations)
+                return f"感谢您联系我们处理“{subject}”。我已核对相关政策，可以协助您完成后续步骤。参考来源：{sources}。"
+            return f"感谢您联系我们处理“{subject}”。我们正在确认最合适的后续处理方式。"
+
         if state.get("requires_human"):
             return "A human support specialist will review this case because it includes high-risk language."
         if state.get("low_confidence"):
@@ -79,81 +97,199 @@ class MockLLMClient(BaseLLMClient):
             )
         return f"Thanks for contacting support about {subject}. We are reviewing the next best step."
 
-    @staticmethod
-    def _result(
-        category: str,
-        priority: str,
-        risk_level: str,
-        approval: bool = False,
-        confidence: float = 0.8,
-    ) -> dict[str, Any]:
-        return {
-            "category": category,
-            "priority": priority,
-            "risk_level": risk_level,
-            "requires_human": False,
-            "requires_approval": approval,
-            "confidence": confidence,
-        }
-
-
 class OpenAICompatibleLLMClient(MockLLMClient):
-    def __init__(self) -> None:
-        self.settings = get_settings()
+    provider_name = "openai_compatible"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        request_overrides: dict[str, Any] | None = None,
+        fallback_on_error: bool = True,
+        max_retries: int = 0,
+    ) -> None:
+        super().__init__()
+        settings = get_settings()
+        self.api_key = api_key if api_key is not None else settings.openai_api_key
+        self.base_url = base_url or settings.openai_base_url
+        self.model = model or settings.openai_model
+        self.model_name = self.model
+        self.request_overrides = request_overrides or {}
+        self.fallback_on_error = fallback_on_error
+        self.max_retries = max_retries
 
     def classify_ticket(self, subject: str, description: str) -> dict[str, Any]:
+        baseline = super().classify_ticket(subject, description)
         prompt = (
             "Return JSON with category, priority, risk_level, requires_human, "
-            f"requires_approval, confidence for this support ticket:\nSubject: {subject}\nDescription: {description}"
+            "requires_approval, and confidence. "
+            f"Allowed categories: {sorted(CANONICAL_CATEGORIES)}. "
+            f"Allowed priorities: {sorted(CANONICAL_PRIORITIES)}. "
+            f"Allowed risk levels: {sorted(CANONICAL_RISK_LEVELS)}.\n"
+            f"Subject: {subject}\nDescription: {description}"
         )
         try:
-            data = self._chat(prompt)
-            match = re.search(r"\{.*\}", data, re.DOTALL)
-            if match:
-                parsed = json.loads(match.group(0))
-                fallback = super().classify_ticket(subject, description)
-                fallback.update({k: parsed[k] for k in parsed.keys() & fallback.keys()})
-                return fallback
+            data = self._chat(prompt, response_format={"type": "json_object"})
+            parsed = self._parse_classification(data)
+            self.last_classification_suggestion = parsed
+            return baseline
         except Exception:
-            return super().classify_ticket(subject, description)
-        return super().classify_ticket(subject, description)
+            if not self.fallback_on_error:
+                raise
+            self.record_fallback()
+            return baseline
 
     def draft_response(self, state: dict[str, Any]) -> str:
         try:
-            citations = ", ".join(c["title"] for c in state.get("citations", []))
+            locale = state.get("locale") or detect_locale(
+                str(state.get("subject", "")),
+                str(state.get("sanitized_description") or state.get("description", "")),
+            )
+            language_instruction = (
+                "Reply in Simplified Chinese. Keep policy filenames and order IDs unchanged."
+                if locale == "zh"
+                else "Reply in English."
+            )
+            context = "\n".join(
+                f"- {citation['title']}: {citation.get('snippet', '')}"
+                for citation in state.get("citations", [])
+            )
             return self._chat(
-                "Draft a concise customer support response. "
-                f"Category: {state.get('category')}. Subject: {state.get('subject')}. Sources: {citations}."
+                "Draft a concise customer support response grounded only in the supplied ticket and policy context. "
+                f"{language_instruction}\n"
+                f"Category: {state.get('category')}\n"
+                f"Subject: {state.get('subject')}\n"
+                f"Description: {state.get('sanitized_description') or state.get('description')}\n"
+                f"Policy context:\n{context or '- No matching policy context.'}"
             )
         except Exception:
+            if not self.fallback_on_error:
+                raise
+            self.record_fallback()
             return super().draft_response(state)
 
-    def _chat(self, prompt: str) -> str:
-        if not self.settings.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
-        body = {
-            "model": self.settings.openai_model,
+    @staticmethod
+    def _parse_classification(content: str) -> dict[str, Any]:
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if not match:
+            raise RuntimeError("LLM returned no classification JSON")
+        parsed = json.loads(match.group(0))
+        if not isinstance(parsed, dict):
+            raise RuntimeError("LLM classification JSON must be an object")
+        allowed_keys = {
+            "category",
+            "priority",
+            "risk_level",
+            "requires_human",
+            "requires_approval",
+            "confidence",
+        }
+        return {key: parsed[key] for key in parsed.keys() & allowed_keys}
+
+    def _chat(self, prompt: str, response_format: dict[str, str] | None = None) -> str:
+        if not self.api_key:
+            raise RuntimeError("LLM API key is not configured")
+        body: dict[str, Any] = {
+            "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
+            **self.request_overrides,
         }
+        if response_format:
+            body["response_format"] = response_format
+
+        self.attempted_calls += 1
+        try:
+            content = self._request_with_retries(body)
+        except Exception:
+            self.failed_calls += 1
+            raise
+        self.successful_calls += 1
+        return content
+
+    def _request_with_retries(self, body: dict[str, Any]) -> str:
+        for retry_index in range(self.max_retries + 1):
+            try:
+                return self._request_once(body)
+            except urllib.error.HTTPError as exc:
+                transient = exc.code == 429 or 500 <= exc.code <= 599
+                if transient and retry_index < self.max_retries:
+                    self.retry_attempts += 1
+                    time.sleep(self._retry_delay(exc, retry_index))
+                    continue
+                raise RuntimeError(f"LLM request failed with HTTP status {exc.code}") from exc
+            except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+                if retry_index < self.max_retries:
+                    self.retry_attempts += 1
+                    time.sleep(min(2**retry_index, 5))
+                    continue
+                raise RuntimeError("LLM request failed because of a network error") from exc
+        raise RuntimeError("LLM request failed after retries")
+
+    @staticmethod
+    def _retry_delay(exc: urllib.error.HTTPError, retry_index: int) -> float:
+        retry_after = exc.headers.get("Retry-After") if exc.headers else None
+        try:
+            return min(max(float(retry_after), 0), 5) if retry_after else min(2**retry_index, 5)
+        except ValueError:
+            return min(2**retry_index, 5)
+
+    def _request_once(self, body: dict[str, Any]) -> str:
         request = urllib.request.Request(
-            f"{self.settings.openai_base_url.rstrip('/')}/chat/completions",
+            f"{self.base_url.rstrip('/')}/chat/completions",
             data=json.dumps(body).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.settings.openai_api_key}",
+                "Authorization": f"Bearer {self.api_key}",
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"LLM request failed: {exc}") from exc
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
         return payload["choices"][0]["message"]["content"]
+
+    def clear_credentials(self) -> None:
+        self.api_key = None
+
+
+class DeepSeekLLMClient(OpenAICompatibleLLMClient):
+    provider_name = "deepseek"
+
+    def __init__(self, api_key: str) -> None:
+        if not api_key.strip():
+            raise ValueError("DeepSeek API key cannot be empty")
+        super().__init__(
+            api_key=api_key.strip(),
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-flash",
+            request_overrides={"thinking": {"type": "disabled"}},
+            fallback_on_error=False,
+            max_retries=2,
+        )
+
+
+_REQUEST_LLM_CLIENT: ContextVar[BaseLLMClient | None] = ContextVar(
+    "supportops_request_llm_client",
+    default=None,
+)
+
+
+@contextmanager
+def temporary_llm_client(client: OpenAICompatibleLLMClient) -> Iterator[None]:
+    token = _REQUEST_LLM_CLIENT.set(client)
+    try:
+        yield
+    finally:
+        _REQUEST_LLM_CLIENT.reset(token)
+        client.clear_credentials()
 
 
 def get_llm_client() -> BaseLLMClient:
+    request_client = _REQUEST_LLM_CLIENT.get()
+    if request_client is not None:
+        return request_client
     provider = get_settings().llm_provider.lower()
     if provider == "openai_compatible":
         return OpenAICompatibleLLMClient()

@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { RefreshCcw } from 'lucide-react';
 import { api, PendingAction } from '../api/client';
 import ApprovalCard from '../components/ApprovalCard';
+import { useI18n } from '../i18n';
 
 type Props = {
   onChanged: () => void;
 };
 
 function ApprovalsPage({ onChanged }: Props) {
+  const { t } = useI18n();
   const [actions, setActions] = useState<PendingAction[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
 
@@ -37,9 +39,9 @@ function ApprovalsPage({ onChanged }: Props) {
   return (
     <div className="grid gap-4">
       <div className="flex justify-end">
-        <button type="button" className="btn" onClick={load} title="Refresh approvals">
+        <button type="button" className="btn" onClick={load} title={t('approvals.refresh')}>
           <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-          Refresh
+          {t('common.refresh')}
         </button>
       </div>
       <div className="grid gap-3">
@@ -54,7 +56,7 @@ function ApprovalsPage({ onChanged }: Props) {
         ))}
         {actions.length === 0 && (
           <section className="panel p-4">
-            <p className="text-sm text-slate-500">No approval records yet.</p>
+            <p className="text-sm text-slate-500">{t('approvals.empty')}</p>
           </section>
         )}
       </div>

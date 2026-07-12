@@ -1,4 +1,6 @@
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8001';
+
+export type EvalLocale = 'en' | 'zh';
 
 export type Ticket = {
   id: number;
@@ -109,21 +111,42 @@ export type EvalResult = {
   actual_priority: string;
   passed: boolean;
   latency_ms: number;
+  llm_ok: boolean;
+  llm_calls: LlmExecutionAudit;
+  citation_ok: boolean;
+  expected_citation: string | null;
+  response_language_ok: boolean;
+};
+
+export type LlmExecutionAudit = {
+  provider: string;
+  model: string;
+  attempted_calls: number;
+  successful_calls: number;
+  failed_calls: number;
+  fallback_calls: number;
+  retry_attempts: number;
 };
 
 export type EvalPayload = {
+  locale: EvalLocale;
+  run_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
   metrics: Record<string, number>;
   results: EvalResult[];
   failed_cases: EvalResult[];
+  llm_execution: LlmExecutionAudit;
 };
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers = new Headers(options.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers
-    },
-    ...options
+    ...options,
+    headers
   });
   if (!response.ok) {
     const message = await response.text();
@@ -137,9 +160,10 @@ export const api = {
   stats: () => request<StatsOverview>('/api/stats/overview'),
   tickets: () => request<Ticket[]>('/api/tickets'),
   ticket: (id: number) => request<TicketDetail>(`/api/tickets/${id}`),
-  createTicket: (payload: { subject: string; description: string; customer_email?: string }) =>
+  createTicket: (payload: { subject: string; description: string; customer_email?: string }, deepSeekApiKey?: string | null) =>
     request<TicketWorkflowResponse>('/api/tickets', {
       method: 'POST',
+      headers: deepSeekApiKey ? { 'X-DeepSeek-API-Key': deepSeekApiKey } : undefined,
       body: JSON.stringify(payload)
     }),
   approvals: () => request<PendingAction[]>('/api/approvals'),
@@ -152,6 +176,11 @@ export const api = {
       body: JSON.stringify({ question })
     }),
   reindex: () => request<{ indexed: number; documents: KnowledgeDocument[] }>('/api/rag/reindex', { method: 'POST' }),
-  runEvals: () => request<EvalPayload>('/api/evals/run', { method: 'POST' }),
-  latestEvals: () => request<EvalPayload>('/api/evals/latest')
+  runEvals: (locale: EvalLocale, deepSeekApiKey?: string | null) =>
+    request<EvalPayload>(`/api/evals/run?locale=${encodeURIComponent(locale)}`, {
+      method: 'POST',
+      headers: deepSeekApiKey ? { 'X-DeepSeek-API-Key': deepSeekApiKey } : undefined
+    }),
+  latestEvals: (locale: EvalLocale = 'en') =>
+    request<EvalPayload>(`/api/evals/latest?locale=${encodeURIComponent(locale)}`)
 };

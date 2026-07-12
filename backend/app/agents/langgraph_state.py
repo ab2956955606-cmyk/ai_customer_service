@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+from app.agents.policy import detect_locale
+
 
 class SupportAgentState(TypedDict, total=False):
     ticket_id: int | None
@@ -10,6 +12,7 @@ class SupportAgentState(TypedDict, total=False):
     description: str
     sanitized_description: str
     customer_email: str | None
+    locale: str
     category: str | None
     priority: str | None
     risk_level: str | None
@@ -50,6 +53,7 @@ def initial_langgraph_state(
         description=description,
         sanitized_description=description,
         customer_email=customer_email.lower() if customer_email else None,
+        locale=detect_locale(subject, description),
         category=None,
         priority="normal",
         risk_level="low",

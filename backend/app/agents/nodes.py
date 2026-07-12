@@ -5,7 +5,20 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.agents.llm import URGENT_TERMS, get_llm_client
+from app.agents.llm import MockLLMClient, get_llm_client
+from app.agents.policy import (
+    ACCOUNT_DELETION_TERMS,
+    ADDRESS_CHANGE_TERMS,
+    APPROVAL_TERMS,
+    CANCEL_ORDER_TERMS,
+    DOWNGRADE_TERMS,
+    PROMPT_INJECTION_TERMS,
+    REFUND_TERMS,
+    SEVERE_PROMPT_INJECTION_TERMS,
+    URGENT_TERMS,
+    contains_any,
+    matching_terms,
+)
 from app.agents.state import AgentState
 from app.models import Ticket
 from app.rag.retriever import retrieve
@@ -13,27 +26,6 @@ from app.serializers import action_to_dict, ticket_to_dict
 from app.tools.action_tools import create_internal_task, create_pending_action, handoff_to_human
 from app.tools.customer_tools import get_customer_by_email
 from app.tools.order_tools import extract_order_number, get_order_by_number, search_orders_by_customer
-
-
-PROMPT_INJECTION_TERMS = [
-    "ignore previous instructions",
-    "reveal system prompt",
-    "bypass approval",
-    "execute refund without approval",
-    "delete all data",
-]
-
-ACTION_KEYWORDS = {
-    "refund": "create_refund_request",
-    "money back": "create_refund_request",
-    "cancel order": "cancel_order",
-    "change address": "update_shipping_address",
-    "update address": "update_shipping_address",
-    "shipping address": "update_shipping_address",
-    "account deletion": "handoff_to_human",
-    "delete my account": "handoff_to_human",
-    "downgrade": "create_internal_task",
-}
 
 
 def _text(state: AgentState) -> str:
@@ -86,7 +78,7 @@ def injection_guard_node(state: AgentState, db: Session) -> AgentState:
     del db
     original = f"{state.get('subject', '')} {state.get('description', '')}"
     lowered = original.lower()
-    flags = [term for term in PROMPT_INJECTION_TERMS if term in lowered]
+    flags = matching_terms(lowered, PROMPT_INJECTION_TERMS)
     state["guardrail_flags"] = flags
     sanitized = state.get("description", "")
     for flag in flags:
@@ -94,7 +86,7 @@ def injection_guard_node(state: AgentState, db: Session) -> AgentState:
     state["sanitized_description"] = sanitized
     if flags:
         state.setdefault("errors", []).append("prompt injection detected")
-    if any(flag in {"delete all data", "bypass approval", "execute refund without approval", "reveal system prompt"} for flag in flags):
+    if any(flag in SEVERE_PROMPT_INJECTION_TERMS for flag in flags):
         state["requires_human"] = True
         state["risk_level"] = "high"
         state["priority"] = "urgent"
@@ -110,10 +102,16 @@ def injection_guard_node(state: AgentState, db: Session) -> AgentState:
 def triage_agent_node(state: AgentState, db: Session) -> AgentState:
     del db
     llm = get_llm_client()
+    call_failed = False
     try:
         result = llm.classify_ticket(state["subject"], state.get("sanitized_description") or state["description"])
     except Exception as exc:
-        result = {"category": "unknown", "priority": "normal", "risk_level": "low", "confidence": 0.0}
+        result = MockLLMClient().classify_ticket(
+            state["subject"],
+            state.get("sanitized_description") or state["description"],
+        )
+        llm.record_fallback()
+        call_failed = True
         state.setdefault("errors", []).append(f"llm triage failed: {exc}")
 
     state["category"] = result.get("category", "unknown")
@@ -122,10 +120,26 @@ def triage_agent_node(state: AgentState, db: Session) -> AgentState:
     state["requires_human"] = bool(state.get("requires_human") or result.get("requires_human"))
     state["requires_approval"] = bool(state.get("requires_approval") or result.get("requires_approval"))
     state["low_confidence"] = float(result.get("confidence", 0.5)) < 0.45 or state["category"] == "unknown"
+    suggestion = llm.last_classification_suggestion
+    if suggestion:
+        output = (
+            "LLM suggested "
+            f"category={suggestion.get('category')}, priority={suggestion.get('priority')}, "
+            f"risk={suggestion.get('risk_level')}; Python policy enforced "
+            f"category={state['category']}, priority={state['priority']}, risk={state['risk_level']}."
+        )
+    elif call_failed:
+        output = (
+            "LLM triage failed; deterministic fallback enforced "
+            f"category={state['category']}, priority={state['priority']}, risk={state['risk_level']}."
+        )
+    else:
+        output = f"Classified as category={state['category']}, priority={state['priority']}, risk={state['risk_level']}."
     _set_event(
         state,
-        f"Classified as category={state['category']}, priority={state['priority']}, risk={state['risk_level']}.",
-        tool_name="MockLLMClient" if llm.__class__.__name__ == "MockLLMClient" else llm.__class__.__name__,
+        output,
+        tool_name=llm.__class__.__name__,
+        status="failed" if call_failed else "completed",
     )
     return state
 
@@ -133,13 +147,13 @@ def triage_agent_node(state: AgentState, db: Session) -> AgentState:
 def risk_policy_node(state: AgentState, db: Session) -> AgentState:
     del db
     text = _text(state)
-    urgent_hits = sorted(term for term in URGENT_TERMS if term in text)
+    urgent_hits = matching_terms(text, URGENT_TERMS)
     if urgent_hits:
         state["priority"] = "urgent"
         state["risk_level"] = "high"
         state["requires_human"] = True
         state["requires_approval"] = False
-    if any(term in text for term in ["refund", "cancel order", "change address", "update address", "shipping address", "account deletion", "delete my account", "downgrade"]):
+    if contains_any(text, APPROVAL_TERMS):
         if not state.get("requires_human"):
             state["requires_approval"] = True
             state["risk_level"] = "medium"
@@ -187,13 +201,32 @@ def rag_retrieval_node(state: AgentState, db: Session) -> AgentState:
 
 def response_drafter_node(state: AgentState, db: Session) -> AgentState:
     del db
+    if state.get("low_confidence"):
+        state["draft_response"] = MockLLMClient().draft_response(state)
+        _set_event(
+            state,
+            "Low-confidence route produced a deterministic clarification question.",
+            tool_name="deterministic_clarification",
+            citations=state.get("citations", []),
+        )
+        return state
+
     llm = get_llm_client()
+    call_failed = False
     try:
         state["draft_response"] = llm.draft_response(state)
     except Exception as exc:
+        llm.record_fallback()
+        call_failed = True
         state.setdefault("errors", []).append(f"llm draft failed: {exc}")
-        state["draft_response"] = "Thanks for contacting support. A teammate will review this request."
-    _set_event(state, "Draft response created.", tool_name=llm.__class__.__name__, citations=state.get("citations", []))
+        state["draft_response"] = MockLLMClient().draft_response(state)
+    _set_event(
+        state,
+        "LLM draft failed; deterministic fallback response created." if call_failed else "Draft response created.",
+        tool_name=llm.__class__.__name__,
+        citations=state.get("citations", []),
+        status="failed" if call_failed else "completed",
+    )
     return state
 
 
@@ -206,9 +239,14 @@ def _primary_order(state: AgentState) -> dict[str, Any] | None:
 
 
 def _extract_address(text: str) -> str:
-    match = re.search(r"(?:to|address is|new address is)\s+(.+)", text, flags=re.IGNORECASE)
-    if match:
-        return match.group(1).strip().rstrip(".")
+    patterns = [
+        r"(?:to|address is|new address is)\s+(.+)",
+        r"(?:收货地址(?:改为|修改为|更改为|是|为)|改为|修改为|更改为|新地址(?:是|为)?)[:：]?\s*(.+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip().rstrip(".。")
     return "Address supplied in customer ticket"
 
 
@@ -218,7 +256,7 @@ def action_planner_node(state: AgentState, db: Session) -> AgentState:
     planned: list[dict[str, Any]] = []
     order = _primary_order(state)
 
-    if "refund" in text or "money back" in text:
+    if contains_any(text, REFUND_TERMS):
         planned.append(
             {
                 "action_type": "create_refund_request",
@@ -230,7 +268,7 @@ def action_planner_node(state: AgentState, db: Session) -> AgentState:
                 },
             }
         )
-    if "cancel order" in text:
+    if contains_any(text, CANCEL_ORDER_TERMS):
         planned.append(
             {
                 "action_type": "cancel_order",
@@ -238,7 +276,7 @@ def action_planner_node(state: AgentState, db: Session) -> AgentState:
                 "payload": {"order_id": order["id"] if order else None, "reason": state.get("subject")},
             }
         )
-    if "change address" in text or "update address" in text or "shipping address" in text:
+    if contains_any(text, ADDRESS_CHANGE_TERMS):
         planned.append(
             {
                 "action_type": "update_shipping_address",
@@ -249,12 +287,26 @@ def action_planner_node(state: AgentState, db: Session) -> AgentState:
                 },
             }
         )
-    if "downgrade" in text:
+    if contains_any(text, DOWNGRADE_TERMS):
         planned.append(
             {
                 "action_type": "create_internal_task",
                 "risk_level": "medium",
-                "payload": {"title": "Review plan downgrade request", "priority": "medium"},
+                "payload": {
+                    "title": "审核套餐降级请求" if state.get("locale") == "zh" else "Review plan downgrade request",
+                    "priority": "medium",
+                },
+            }
+        )
+    if contains_any(text, ACCOUNT_DELETION_TERMS):
+        planned.append(
+            {
+                "action_type": "create_internal_task",
+                "risk_level": "medium",
+                "payload": {
+                    "title": "审核账户删除请求" if state.get("locale") == "zh" else "Review account deletion request",
+                    "priority": "medium",
+                },
             }
         )
 
@@ -306,8 +358,13 @@ def approval_gate_node(state: AgentState, db: Session) -> AgentState:
 
 
 def human_escalation_node(state: AgentState, db: Session) -> AgentState:
-    reason = "high-risk fraud, legal, safety, account compromise, or prompt-injection signal"
-    ticket = handoff_to_human(db, int(state["ticket_id"]), reason)
+    locale = state.get("locale", "en")
+    reason = (
+        "工单包含欺诈、法律、账户安全或提示注入等高风险信号"
+        if locale == "zh"
+        else "high-risk fraud, legal, safety, account compromise, or prompt-injection signal"
+    )
+    ticket = handoff_to_human(db, int(state["ticket_id"]), reason, locale=locale)
     state["final_response"] = ticket.final_response
     state["risk_level"] = "high"
     state["priority"] = "urgent"
@@ -327,15 +384,21 @@ def finalize_node(state: AgentState, db: Session) -> AgentState:
     if state.get("requires_human"):
         ticket.status = "escalated"
         state["final_response"] = state.get("final_response") or (
-            "Thanks for the details. A human support specialist will review this high-risk case."
+            "感谢您提供信息。该工单涉及高风险情况，人工客服专员将尽快审查并与您联系。"
+            if state.get("locale") == "zh"
+            else "Thanks for the details. A human support specialist will review this high-risk case."
         )
     elif any(action.get("status") == "pending" for action in state.get("pending_actions", [])):
         ticket.status = "pending_approval"
-        state["final_response"] = (
-            state.get("draft_response")
-            or "I found the relevant policy."
-        ) + " I created a pending approval before any account, order, or payment change is executed."
-    elif state.get("low_confidence") and not state.get("citations"):
+        if state.get("locale") == "zh":
+            state["final_response"] = (
+                state.get("draft_response") or "我已找到相关政策。"
+            ) + " 在执行任何账户、订单或付款变更前，系统已创建待审批操作。"
+        else:
+            state["final_response"] = (
+                state.get("draft_response") or "I found the relevant policy."
+            ) + " I created a pending approval before any account, order, or payment change is executed."
+    elif state.get("low_confidence"):
         ticket.status = "open"
         state["final_response"] = state.get("draft_response")
     else:

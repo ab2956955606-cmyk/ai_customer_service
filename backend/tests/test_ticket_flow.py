@@ -65,3 +65,20 @@ def test_ticket_events_are_persisted(client):
     names = [event["node_name"] for event in events.json()]
     assert names[0] == "intake_node"
     assert "finalize_node" in names
+
+
+def test_unknown_ticket_stays_open_and_asks_for_clarification(client):
+    response = client.post(
+        "/api/tickets",
+        json={
+            "subject": "Need some help",
+            "description": "Something is not quite right.",
+            "customer_email": "alice@example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ticket"]["category"] == "unknown"
+    assert body["ticket"]["status"] == "open"
+    assert "share a little more detail" in body["final_response"]

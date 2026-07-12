@@ -2,8 +2,10 @@ import { FormEvent, useEffect, useState } from 'react';
 import { RefreshCcw, Search } from 'lucide-react';
 import { api, Citation, KnowledgeDocument } from '../api/client';
 import RagAnswerPanel from '../components/RagAnswerPanel';
+import { useI18n } from '../i18n';
 
 function KnowledgePage() {
+  const { t } = useI18n();
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [question, setQuestion] = useState('How can I cancel my subscription?');
   const [answer, setAnswer] = useState('');
@@ -39,10 +41,10 @@ function KnowledgePage() {
     <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
       <section className="panel p-4">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-ink">Knowledge Documents</h2>
-          <button type="button" className="btn" onClick={reindex} title="Reindex">
+          <h2 className="text-sm font-semibold text-ink">{t('knowledge.documents')}</h2>
+          <button type="button" className="btn" onClick={reindex} title={t('knowledge.reindex')}>
             <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-            Reindex
+            {t('knowledge.reindex')}
           </button>
         </div>
         <div className="grid gap-3">
@@ -58,12 +60,18 @@ function KnowledgePage() {
       <div className="grid content-start gap-4">
         <form className="panel p-4" onSubmit={ask}>
           <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Question
-            <textarea className="input min-h-28 resize-y" value={question} onChange={(event) => setQuestion(event.target.value)} />
+            {t('knowledge.question')}
+            <textarea
+              className="input min-h-28 resize-y"
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder={t('knowledge.questionPlaceholder')}
+              required
+            />
           </label>
           <button type="submit" className="btn btn-primary mt-3" disabled={loading}>
             <Search className="h-4 w-4" aria-hidden="true" />
-            {loading ? 'Searching' : 'Ask RAG'}
+            {loading ? t('knowledge.searching') : t('knowledge.ask')}
           </button>
         </form>
         <RagAnswerPanel answer={answer} citations={citations} />

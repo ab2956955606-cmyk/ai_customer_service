@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from app.agents.llm import DeepSeekLLMClient, temporary_llm_client
 from app.agents.runtime_factory import get_support_runner
 from app.db import get_db
 from app.models import AgentEvent, AgentRun, PendingAction, Ticket
@@ -13,13 +16,30 @@ router = APIRouter(prefix="/api/tickets", tags=["tickets"])
 
 
 @router.post("", response_model=TicketWorkflowResponse)
-def create_ticket(payload: TicketCreate, db: Session = Depends(get_db)) -> dict:
-    result = get_support_runner().run_ticket_data(
-        db,
-        subject=payload.subject,
-        description=payload.description,
-        customer_email=payload.customer_email,
-    )
+def create_ticket(
+    payload: TicketCreate,
+    db: Session = Depends(get_db),
+    deepseek_api_key: Annotated[
+        str | None,
+        Header(alias="X-DeepSeek-API-Key", max_length=512),
+    ] = None,
+) -> dict:
+    runner = get_support_runner()
+    if deepseek_api_key:
+        with temporary_llm_client(DeepSeekLLMClient(deepseek_api_key)):
+            result = runner.run_ticket_data(
+                db,
+                subject=payload.subject,
+                description=payload.description,
+                customer_email=payload.customer_email,
+            )
+    else:
+        result = runner.run_ticket_data(
+            db,
+            subject=payload.subject,
+            description=payload.description,
+            customer_email=payload.customer_email,
+        )
     result.pop("state", None)
     return result
 

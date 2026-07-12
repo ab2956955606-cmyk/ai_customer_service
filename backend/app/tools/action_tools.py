@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.agents.policy import Locale, detect_locale
 from app.models import PendingAction, Ticket, utc_now
 from app.tools.order_tools import cancel_order, update_shipping_address
 
@@ -36,16 +37,19 @@ def create_pending_action(
     return action
 
 
-def handoff_to_human(db: Session, ticket_id: int, reason: str) -> Ticket:
+def handoff_to_human(db: Session, ticket_id: int, reason: str, locale: Locale = "en") -> Ticket:
     ticket = db.get(Ticket, ticket_id)
     if ticket is None:
         raise ValueError("Ticket not found")
     ticket.status = "escalated"
     ticket.risk_level = "high"
-    ticket.final_response = (
-        "Thanks for flagging this. A human support specialist will review your case "
-        f"because it requires careful handling: {reason}."
-    )
+    if locale == "zh":
+        ticket.final_response = f"感谢您及时反馈。该工单需要谨慎处理，人工客服专员将进行审查：{reason}。"
+    else:
+        ticket.final_response = (
+            "Thanks for flagging this. A human support specialist will review your case "
+            f"because it requires careful handling: {reason}."
+        )
     db.commit()
     db.refresh(ticket)
     return ticket
@@ -86,9 +90,11 @@ def execute_approved_action(db: Session, action: PendingAction) -> PendingAction
     ticket = db.get(Ticket, action.ticket_id)
     if ticket:
         ticket.status = "resolved"
-        ticket.final_response = (
-            ticket.final_response
-            or "Your request has been reviewed and the approved action has been completed."
+        locale = detect_locale(ticket.subject, ticket.description)
+        ticket.final_response = ticket.final_response or (
+            "您的请求已完成审核，获批操作已经执行。"
+            if locale == "zh"
+            else "Your request has been reviewed and the approved action has been completed."
         )
     db.commit()
     db.refresh(action)
@@ -101,9 +107,11 @@ def reject_action(db: Session, action: PendingAction) -> PendingAction:
     ticket = db.get(Ticket, action.ticket_id)
     if ticket and ticket.status == "pending_approval":
         ticket.status = "resolved"
+        locale = detect_locale(ticket.subject, ticket.description)
         ticket.final_response = (
-            "The requested action was reviewed and not approved. No account, order, or "
-            "payment changes were executed."
+            "申请的操作已经审核但未获批准，系统没有执行任何账户、订单或付款变更。"
+            if locale == "zh"
+            else "The requested action was reviewed and not approved. No account, order, or payment changes were executed."
         )
     db.commit()
     db.refresh(action)

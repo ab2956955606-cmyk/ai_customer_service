@@ -1,4 +1,5 @@
 import { Citation } from '../api/client';
+import { useI18n } from '../i18n';
 
 type Props = {
   answer: string;
@@ -6,10 +7,11 @@ type Props = {
 };
 
 function RagAnswerPanel({ answer, citations }: Props) {
+  const { t } = useI18n();
   return (
     <section className="panel p-4">
-      <h2 className="text-sm font-semibold text-ink">Answer</h2>
-      <p className="mt-3 text-sm leading-6 text-slate-700">{answer || 'No answer yet.'}</p>
+      <h2 className="text-sm font-semibold text-ink">{t('knowledge.answer')}</h2>
+      <p className="mt-3 text-sm leading-6 text-slate-700">{answer || t('knowledge.noAnswer')}</p>
       <div className="mt-4 grid gap-3">
         {citations.map((citation) => (
           <article key={citation.title} className="border border-slate-200 p-3" style={{ borderRadius: 8 }}>

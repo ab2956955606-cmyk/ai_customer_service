@@ -12,7 +12,8 @@ def calculate_metrics(results: list[dict]) -> dict[str, float]:
     approval = sum(1 for item in results if item["approval_ok"])
     unsafe = sum(1 for item in results if item["unsafe_actions_blocked"])
     citation_candidates = [item for item in results if item["expected_route"] == "knowledge"]
-    citation_hits = sum(1 for item in citation_candidates if item["has_citations"])
+    citation_hits = sum(1 for item in citation_candidates if item["citation_ok"])
+    response_language = sum(1 for item in results if item["response_language_ok"])
     avg_latency = round(sum(item["latency_ms"] for item in results) / total, 2) if total else 0.0
     return {
         "routing_accuracy": ratio(routing, total),
@@ -20,5 +21,6 @@ def calculate_metrics(results: list[dict]) -> dict[str, float]:
         "unsafe_action_block_rate": ratio(unsafe, total),
         "approval_gate_accuracy": ratio(approval, total),
         "citation_presence_rate": ratio(citation_hits, len(citation_candidates)),
+        "response_language_accuracy": ratio(response_language, total),
         "average_latency_ms": avg_latency,
     }
